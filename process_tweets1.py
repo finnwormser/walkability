@@ -134,7 +134,7 @@ def aggregate_counters_by_block(df):
     """
     df = df.copy()
     df.loc[:, 'counters'] = df['counters'].apply(lambda x: x if isinstance(x, dict) else {})
-    grouped = df.groupby('GEOID10', as_index=False)['counters'].agg(
+    grouped = df.groupby('GEOID10', as_index=False, observed=False)['counters'].agg(
         lambda counters: merge_counters(list(counters))
     )
     grouped.columns = ['GEOID10', 'aggregated_counters']
@@ -154,14 +154,14 @@ def process_chunk(chunk_df):
     agg_df = agg_df.reset_index(drop=True)
     
     # Do not merge tweet counts; just keep aggregated counters.
-    tweet_counts = processed_df.groupby('GEOID10').size().reset_index(name='tweet_count')
+    tweet_counts = processed_df.groupby('GEOID10', observed=False).size().reset_index(name='tweet_count')
     agg_df = pd.merge(agg_df, tweet_counts, on='GEOID10', how='left')
     aggregated_result = {row['GEOID10']: {"aggregated_counters": row['aggregated_counters'],
                                            "tweet_count": row['tweet_count']} for _, row in agg_df.iterrows()}
     
     # Compute daily counts on the processed DataFrame.
     processed_df['Date'] = pd.to_datetime(processed_df["tweet_created_at"]).dt.date
-    daily_chunk = processed_df.groupby(['Date', 'GEOID10']).size().reset_index(name='tweet_count')
+    daily_chunk = processed_df.groupby(['Date', 'GEOID10'], observed=False).size().reset_index(name='tweet_count')
     
     return aggregated_result, daily_chunk
 
@@ -172,10 +172,7 @@ def process_chunk(chunk_df):
 # ------------------------------------------------------------------------------
 if __name__ == '__main__':
     # Read 30 dates from a CSV file.
-    input_csv = "/gpfs2/scratch/pwormser/research/dates_2013-2015.csv"
-    output_csv = "aggregated_tweets2013-15.csv"
-    counts_csv = "tweet_counts.csv"
-    daily_csv = "tweets_per_day_per_block.csv"
+    input_csv = "/gpfs2/scratch/pwormser/research/DataSources/15_shuffled_dates_2014.csv"
     
     date_df = pd.read_csv(input_csv, parse_dates=["Date"])
     dates = date_df["Date"].tolist()
@@ -185,6 +182,7 @@ if __name__ == '__main__':
     
     # Prepare a list to hold DataFrames for each day.
     tweet_dfs = []
+
     for current_date in dates:
         start_date = current_date
         end_date = current_date + timedelta(days=1)
@@ -193,7 +191,8 @@ if __name__ == '__main__':
             "tweet_created_at": {"$gte": start_date, "$lt": end_date},
             "fastText_lang": lang,
         }
-        tweets = get_tweets(collection, query)
+        
+        tweets = get_tweets(collection, query, limit=0)
         ngrams_parser = load_ngrams_parser()
         tweets = [{**tweet, "counters": parse_ngrams_tweet(tweet, ngrams_parser)} for tweet in tweets]
         if presence_only:
@@ -212,7 +211,7 @@ if __name__ == '__main__':
         
     
         # Process tweets in chunks.
-    chunk_size = 1000  # Adjust as needed.
+    chunk_size = 300  # Adjust as needed.
     all_agg = {}
     daily_counts_list = []  # For per-day, per-block tweet counts.
     
@@ -244,14 +243,14 @@ if __name__ == '__main__':
     final_agg = df_sentiment(final_agg, word2score=word2score)
 
     # Save output CSV files.
-    final_agg.to_csv("aggregated_tweets2013-15.csv", index=False)
-    final_agg[['GEOID10', 'tweet_count']].to_csv("tweet_counts.csv", index=False)
-    daily_counts_df.to_csv("tweets_per_day_per_block.csv", index=False)
+    final_agg.to_csv("aggregated_tweets_30days_long.csv", index=False)
+    final_agg[['GEOID10', 'tweet_count']].to_csv("tweet_counts_30days.csv", index=False)
+    daily_counts_df.to_csv("tweets_per_day_per_block_30days.csv", index=False)
     
-    print("Aggregated tweet data saved to aggregated_tweets2013-15.csv")
-    print("Overall tweet counts saved to tweet_counts.csv")
-    print("Daily tweet counts per block saved to tweets_per_day_per_block.csv")
-    print(final_agg)
-
+    print("Aggregated tweet data saved to aggregated_tweets_30days_long.csv")
+    print("Overall tweet counts saved to tweet_counts_30days.csv")
+    print("Daily tweet counts per block saved to tweets_per_day_per_block_30days.csv")
+    print(final_agg.head())
+    print(daily_counts_df.head())
 
 
